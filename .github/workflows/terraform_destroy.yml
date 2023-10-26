@@ -1,0 +1,55 @@
+# Workflow for Terraform Destroy Execution
+name: Terraform Destroy
+
+# Execution controls for this workflow
+on:
+  # Triggers this workflow on push or pull request events on the "destroy" branch
+  push:
+    branches: 
+      - destroy
+
+# Variables configured in Secrets
+env: 
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: 'us-east-1'
+
+# Workflow execution sequence
+jobs:
+  # Workflow for the single job named "terraform destroy"
+  terraform_destroy:
+    # Runner type on which the job is executed
+    runs-on: ubuntu-latest
+    
+    # Sequence of tasks to be executed
+    steps:
+      # Checks out the repository into $GITHUB_WORKSPACE for the job to access
+      - name: Checkout code
+        uses: actions/checkout@v3
+    
+      # Sets up SSH keys
+      - name: Setup SSH Keys
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          echo "${{ secrets.SSH_PUBLIC_KEY }}" > ~/.ssh/id_rsa.pub
+          chmod 600 ~/.ssh/id_rsa
+          chmod 644 ~/.ssh/id_rsa.pub
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+    
+      # Sets up Terraform
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v1
+    
+      # Command to initialize Terraform
+      - name: Initialize Terraform
+        run: terraform init
+
+      # Imports the terraform.tfstate file from the Bucket and runs the destroy from it
+      - name: Import Terraform State
+        run: terraform init -reconfigure -backend-config="bucket=ews-hackweek-state" -backend-config="key=terraform.tfstate"
+
+      # Command to execute Terraform Destroy
+      - name: Terraform Destroy
+        run: terraform destroy -auto-approve
+      

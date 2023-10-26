@@ -1,0 +1,115 @@
+# Basic workflow to provision the AWS Instance and the Application for Hackweek
+name: simple-app-action
+
+# Execution controls for this workflow
+on:
+  # Triggers this workflow on push or pull request events on the "main" branch
+  push:
+    branches: ["main"]
+
+# Variables configured in Secrets
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: 'us-east-1'
+
+# Workflow's execution sequence
+jobs:
+  # Workflow for the single job named "build"
+  build:
+    # Runner type on which the job is executed
+    runs-on: ubuntu-latest
+
+    # Sequence of tasks to be executed
+    steps:
+      # Checks out the repository into $GITHUB_WORKSPACE for the job to access
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Creates an AWS S3 Bucket to store the terraform.tfstate file
+      - name: Create Bucket S3
+        run: aws s3api create-bucket --bucket simple-app-java-state --region us-east-1
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: 'us-east-1'
+
+      # Configures SSH keys on the provisioned instance
+      - name: Setup SSH Keys
+        run: |
+          eval `ssh-agent -s`
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          echo "${{ secrets.SSH_PUBLIC_KEY }}" > ~/.ssh/id_rsa.pub
+          chmod 600 ~/.ssh/id_rsa
+          chmod 644 ~/.ssh/id_rsa.pub
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+      # Sets up Terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v1
+        with:
+          terraform_wrapper: false
+
+      # Command to initialize Terraform
+      - name: Terraform Init
+        run: terraform init
+
+      # Command to apply Terraform
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
+
+      # Sets the instance_id output from outputs.tf as an Environment Variable
+      - name: Set INSTANCE_ID environment variable
+        run: echo "instance_id=`terraform output -raw instance_id`" >> $GITHUB_ENV
+
+      # Task to check the readiness of the EC2 instance
+      - name: Verify EC2 Instance Status
+        run: |
+          instance_id="${instance_id}"
+         
+          while true; do
+            status=$(aws ec2 describe-instance-status --instance-id $instance_id --query 'InstanceStatuses[0].InstanceStatus.Status' --output text)
+            system_status=$(aws ec2 describe-instance-status --instance-id $instance_id --query 'InstanceStatuses[0].SystemStatus.Status' --output text)
+
+            if [ "$status" == "ok" ] && [ "$system_status" == "ok" ]; then
+              echo "The instance has 2/2 checks passed."
+              break  # Exits the loop when the condition is met
+            else
+              echo "Waiting for the instance to have 2/2 checks passed..."
+              sleep 10
+            fi
+          done
+
+      # Sets the instance_ip output from outputs.tf as an Environment Variable
+      - name: Set INSTANCE_IP environment variable
+        run: echo "instance_ip=`terraform output -raw instance_ip`" >> $GITHUB_ENV
+
+      # Sets up Python and its version
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+
+      # Installs Ansible
+      - name: Install Ansible
+        run: pip install ansible
+
+      # Automatically creates the Ansible inventory.ini file
+      - name: Create inventory Ansible
+        run: |
+          echo "[simple_app_java]" > inventory.ini
+          echo "${instance_ip}" >> inventory.ini
+          echo "" >> inventory.ini
+
+      # Displays the inventory.ini file to verify its proper format
+      - name: Display Ansible Inventory
+        run: cat inventory.ini
+
+      # Collects and stores the host key for the instance's IP, enabling secure SSH connections.
+      - name: host key
+        run: ssh-keyscan ${instance_ip} >> ~/.ssh/known_hosts
+
+      # Executes the Ansible Playbook
+      - name: Run Ansible Playbook
+        run: ansible-playbook -i inventory.ini ansible-playbook.yml --limit simple_app_java --private-key ~/.ssh/id_rsa
