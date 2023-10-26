@@ -1,0 +1,85 @@
+---
+- name: Install Docker on Remote Host
+  hosts: simple_app_java  # Define the host group that will receive this task
+  become: yes  # Allows tasks to be executed as a privileged user (sudo)
+  remote_user: ubuntu  # Define the remote user to be used for the SSH connection
+
+  tasks:
+    - name: Update package list
+      apt:
+        update_cache: yes  # Update the system's package list
+      register: apt_latest  # Register the task result for later use
+
+    - name: Install necessary packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+        state: present  # Ensure the packages are present on the system
+      when: apt_latest is succeeded  # Execute only if the previous task (update) succeeds
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg  # Docker GPG key URL
+        state: present  # Ensure the GPG key is present on the system
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable  # Add the Docker repository
+        state: present  # Ensure the repository is configured on the system
+
+    - name: Install Docker
+      apt:
+        name: docker-ce  # Install Docker Community Edition
+        state: present  # Ensure Docker is installed on the system
+
+    - name: Ensure Docker is running
+      systemd:
+        name: docker
+        state: started  # Start the Docker service
+        enabled: yes  # Enable the service to start automatically at boot
+
+    - name: Copy SSH key to the instance
+      copy:
+        src: ~/.ssh/id_rsa  # Source of the SSH key on the control host
+        dest: /home/ubuntu/.ssh/id_rsa  # Destination of the SSH key on the remote host
+        owner: ubuntu  # Set the owner of the key to 'ubuntu'
+        group: ubuntu  # Set the group of the key to 'ubuntu'
+        mode: '0600'  # Set the permissions of the key to 0600 (read-only for the owner)
+
+    - name: Clone Git repository
+      become: yes  # Allows the task to be executed as a privileged user (sudo)
+      become_user: ubuntu  # Define the user to execute the task (ubuntu)
+      git:
+        repo: 'git@github.com:EverWS/simple_app_cloud.git'  # Git repository URL
+        dest: /home/ubuntu/app  # Destination directory for the clone
+        version: main  # Branch to be cloned
+        accept_hostkey: yes  # Automatically accept the Git host key
+    
+    # This task is adding the 'ubuntu' user to the 'docker' group, allowing it to run Docker commands without sudo.
+    - name: Run usermod command to add user to Docker group
+      shell: sudo usermod -aG docker ubuntu
+
+    # In this task, we SSH into the instance as the 'ubuntu' user and navigate to the '/home/ubuntu/app' directory.
+    # Then, we use Docker to build an image named 'java-hello' from the Dockerfile in that directory.
+    - name: SSH into the instance and build the Dockerfile
+      become: yes
+      become_user: ubuntu
+      shell: |
+        cd /home/ubuntu/app
+        sudo docker build -t java-hello .
+      args:
+        executable: /bin/bash
+
+    # In this task, we run a Docker container named 'java-container' using the 'java-hello' image.
+    - name: Run the Container on port 8000
+      become: yes
+      become_user: ubuntu
+      docker_container:
+        name: java-container
+        image: java-hello
+        state: started
+        published_ports:
+          - "8000:8080"  # Map host port 8000 to container port 8080
