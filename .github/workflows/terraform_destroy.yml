@@ -47,7 +47,7 @@ jobs:
 
       # Imports the terraform.tfstate file from the Bucket and runs the destroy from it
       - name: Import Terraform State
-        run: terraform init -reconfigure -backend-config="bucket=ews-hackweek-state" -backend-config="key=terraform.tfstate"
+        run: terraform init -reconfigure -backend-config="bucket=simple-app-java-state" -backend-config="key=terraform.tfstate"
 
       # Command to execute Terraform Destroy
       - name: Terraform Destroy
