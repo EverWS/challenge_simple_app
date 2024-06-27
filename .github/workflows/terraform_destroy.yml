@@ -52,4 +52,3 @@ jobs:
       # Command to execute Terraform Destroy
       - name: Terraform Destroy
         run: terraform destroy -auto-approve
-      
