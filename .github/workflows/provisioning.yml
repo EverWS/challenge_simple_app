@@ -113,3 +113,4 @@ jobs:
       # Executes the Ansible Playbook
       - name: Run Ansible Playbook
         run: ansible-playbook -i inventory.ini playbook-ansible.yml --limit simple_app_java --private-key ~/.ssh/id_rsa
+
